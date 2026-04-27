@@ -1,4 +1,4 @@
-  name: build-windows-pyd
+  name: build-windows-pyd-static
 
   on:
     workflow_dispatch:
@@ -13,6 +13,10 @@
         matrix:
           pyver: ["3.9", "3.10"]
 
+      env:
+        VCPKG_ROOT: C:\vcpkg
+        VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
+
       steps:
         - uses: actions/checkout@v4
 
@@ -24,24 +28,30 @@
         - name: Clone vcpkg
           shell: pwsh
           run: |
-            git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-            C:\vcpkg\bootstrap-vcpkg.bat
+            git clone https://github.com/microsoft/vcpkg.git $env:VCPKG_ROOT
+            & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat"
 
-        - name: Install dependencies
+        - name: Install dependencies (static-md)
           shell: pwsh
           run: |
-            C:\vcpkg\vcpkg.exe install opencv4:x64-windows brotli:x64-windows pybind11:x64-windows
+            & "$env:VCPKG_ROOT\vcpkg.exe" install `
+              opencv4:x64-windows-static-md `
+              brotli:x64-windows-static-md `
+              pybind11:x64-windows-static-md
 
         - name: Configure CMake
           shell: pwsh
           run: |
             cmake -S cpp -B build -G "Visual Studio 17 2022" -A x64 `
-              -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+              -DCMAKE_BUILD_TYPE=Release `
+              -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+              -DVCPKG_TARGET_TRIPLET=x64-windows-static-md `
+              -DPython3_EXECUTABLE="$env:pythonLocation\python.exe"
 
-        - name: Build trvl module
+        - name: Build trvl
           shell: pwsh
           run: |
-            cmake --build build --config Release --target trvl
+            cmake --build build --config Release --target trvl -j 4
 
         - name: Collect artifact
           shell: pwsh
@@ -49,10 +59,11 @@
             New-Item -ItemType Directory -Force -Path artifacts | Out-Null
             $pyd = Get-ChildItem -Recurse build -Filter "trvl*.pyd" | Select-Object -First 1
             if (-not $pyd) { throw "No trvl*.pyd found" }
-            Copy-Item $pyd.FullName ("artifacts/trvl-py" + "${{ matrix.pyver }}" + ".pyd")
+            Copy-Item $pyd.FullName ("artifacts/trvl-py" + "${{ matrix.pyver }}" + "-" + $pyd.Name)
 
         - name: Upload artifact
           uses: actions/upload-artifact@v4
           with:
-            name: trvl-windows-pyd-py${{ matrix.pyver }}
+            name: trvl-windows-static-py${{ matrix.pyver }}
             path: artifacts/*
+
