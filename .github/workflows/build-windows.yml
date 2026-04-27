@@ -1,0 +1,55 @@
+  name: build-windows-pyd
+
+  on:
+    workflow_dispatch:
+    push:
+      branches: [ main ]
+
+  jobs:
+    build:
+      runs-on: windows-latest
+
+      steps:
+        - uses: actions/checkout@v4
+
+        - name: Setup Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+        - name: Clone vcpkg
+        shell: pwsh
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+
+        - name: Install dependencies
+        shell: pwsh
+        run: |
+          C:\vcpkg\vcpkg.exe install opencv4:x64-windows brotli:x64-windows pybind11:x64-windows
+
+        - name: Configure CMake
+        shell: pwsh
+        run: |
+          cmake -S cpp -B build -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+
+        - name: Build trvl module
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target trvl
+
+        - name: Collect artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $pyd = Get-ChildItem -Recurse build -Filter "trvl*.pyd" | Select-Object -First 1
+          if (-not $pyd) { throw "No trvl*.pyd found" }
+          Copy-Item $pyd.FullName artifacts\
+
+        - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trvl-windows-pyd
+          path: artifacts/*
+
