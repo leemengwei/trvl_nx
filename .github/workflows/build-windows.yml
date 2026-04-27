@@ -8,14 +8,18 @@
   jobs:
     build:
       runs-on: windows-latest
+      strategy:
+        fail-fast: false
+        matrix:
+          pyver: ["3.9", "3.10"]
 
       steps:
         - uses: actions/checkout@v4
 
-        - name: Setup Python 3.9
+        - name: Setup Python
           uses: actions/setup-python@v5
           with:
-            python-version: "3.9"
+            python-version: ${{ matrix.pyver }}
 
         - name: Clone vcpkg
           shell: pwsh
@@ -45,10 +49,10 @@
             New-Item -ItemType Directory -Force -Path artifacts | Out-Null
             $pyd = Get-ChildItem -Recurse build -Filter "trvl*.pyd" | Select-Object -First 1
             if (-not $pyd) { throw "No trvl*.pyd found" }
-            Copy-Item $pyd.FullName artifacts\
+            Copy-Item $pyd.FullName ("artifacts/trvl-py" + "${{ matrix.pyver }}" + ".pyd")
 
         - name: Upload artifact
           uses: actions/upload-artifact@v4
           with:
-            name: trvl-windows-pyd
+            name: trvl-windows-pyd-py${{ matrix.pyver }}
             path: artifacts/*
