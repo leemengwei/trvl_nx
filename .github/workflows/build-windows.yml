@@ -18,14 +18,16 @@
         VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
 
       steps:
-        - uses: actions/checkout@v4
+        - name: Checkout
+          uses: actions/checkout@v4
 
         - name: Setup Python
           uses: actions/setup-python@v5
           with:
             python-version: ${{ matrix.pyver }}
+            architecture: x64
 
-        - name: Clone vcpkg
+        - name: Clone & bootstrap vcpkg
           shell: pwsh
           run: |
             git clone https://github.com/microsoft/vcpkg.git $env:VCPKG_ROOT
@@ -38,6 +40,35 @@
               opencv4:x64-windows-static-md `
               brotli:x64-windows-static-md `
               pybind11:x64-windows-static-md
+
+        - name: Patch CMakeLists for brotlicommon link
+          shell: pwsh
+          run: |
+            $cmakeFile = "cpp/CMakeLists.txt"
+            $txt = Get-Content $cmakeFile -Raw
+
+            # Ensure brotlicommon is discovered
+            if ($txt -notmatch "find_library\(BROTLICOMMON_LIB") {
+              $txt = $txt -replace "find_library\(BROTLIDEC_LIB NAMES brotlidec\)",
+                                   "find_library(BROTLIDEC_LIB NAMES brotlidec)`nfind_library(BROTLICOMMON_LIB NAMES brotlicommon)"
+            }
+
+            # Ensure check includes brotlicommon
+            $txt = $txt -replace "if\(NOT BROTLIENC_LIB OR NOT BROTLIDEC_LIB\)",
+                                 "if(NOT BROTLIENC_LIB OR NOT BROTLIDEC_LIB OR NOT BROTLICOMMON_LIB)"
+            $txt = $txt -replace "Cannot find Brotli libraries \(brotlienc / brotlidec\)\.",
+                                 "Cannot find Brotli libraries (brotlienc / brotlidec / brotlicommon)."
+
+            # Ensure link list includes brotlicommon
+            if ($txt -match "set\(BROTLI_LIBRARIES\s+\$\{BROTLIENC_LIB\}\s+\$\{BROTLIDEC_LIB\}\)") {
+              $txt = $txt -replace "set\(BROTLI_LIBRARIES\s+\$\{BROTLIENC_LIB\}\s+\$\{BROTLIDEC_LIB\}\)",
+                                   "set(BROTLI_LIBRARIES `${BROTLIENC_LIB} `${BROTLIDEC_LIB} `${BROTLICOMMON_LIB})"
+            } elseif ($txt -notmatch "BROTLICOMMON_LIB") {
+              # fallback: append a force-set if pattern changed
+              $txt += "`nset(BROTLI_LIBRARIES `${BROTLIENC_LIB} `${BROTLIDEC_LIB} `${BROTLICOMMON_LIB})`n"
+            }
+
+            Set-Content -Path $cmakeFile -Value $txt -NoNewline
 
         - name: Configure CMake
           shell: pwsh
@@ -53,12 +84,19 @@
           run: |
             cmake --build build --config Release --target trvl -j 4
 
+        - name: Smoke test import
+          shell: pwsh
+          run: |
+            $pyd = Get-ChildItem -Recurse build -Filter "trvl*.pyd" | Select-Object -First 1
+            if (-not $pyd) { throw "No trvl*.pyd found after build" }
+            $env:PYTHONPATH = $pyd.DirectoryName
+            python -c "import trvl; print(trvl); print(hasattr(trvl,'TrvlDecoder'), hasattr(trvl,'TrvlEncoder'))"
+
         - name: Collect artifact
           shell: pwsh
           run: |
             New-Item -ItemType Directory -Force -Path artifacts | Out-Null
             $pyd = Get-ChildItem -Recurse build -Filter "trvl*.pyd" | Select-Object -First 1
-            if (-not $pyd) { throw "No trvl*.pyd found" }
             Copy-Item $pyd.FullName ("artifacts/trvl-py" + "${{ matrix.pyver }}" + "-" + $pyd.Name)
 
         - name: Upload artifact
@@ -66,4 +104,3 @@
           with:
             name: trvl-windows-static-py${{ matrix.pyver }}
             path: artifacts/*
-
